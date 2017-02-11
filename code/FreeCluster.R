@@ -1,0 +1,181 @@
+time1 = proc.time()
+
+library(trend)
+library(plotrix)
+source('code/AnalTools.R')
+source('code/MapTools.R')
+source('code/InvTools.R')
+source('code/FreeClusterTools.R')
+flowinv=CleanInv('monthlyflow',flowinv)
+#gives: precipinv  flowinv  peakinv
+#with:  "ID"     "LAT"    "LON"    "STATE"  "REGION"
+source('code/TeleTools.R')
+#gives: ENSO  AMO  NAO  PNA  AO  EA  WP  EPNP  EAWR  SCA  TNH  POL PT
+#with:    "Y" "M" "V"
+run=1
+
+#testing with N=1000, use a larger number for actual runs
+N=1000
+
+#set the p-value, this affects both the individual tests and the size of regions
+#pval = .05
+pval=.01
+
+#reads the normalized flow (mu=0,sd=1) and returns yearXsite
+flowtab = GenerateFlowTable('monthlyflow',flowinv)
+
+#generates 10000 [lon,lat] pts centered in inside the Cont-US
+set.seed(run)
+USpts = GeneratePointsUS(N)
+#pt 27 is example
+#     [,1]         [,2]      [,3] [,4]
+#[1,] 1971 0.0003836814 0.6282488   27
+#[2,] 2002 0.0070332285 0.7526848   27
+
+#plots a map of flow sites and USpts
+MapAll(USpts,flowinv[c(3,2)])
+
+#calculates distance between each USpt and each flow site ptsXsites
+pt2site_dist = DistanceGrid(USpts,flowinv[c(3,2)])
+
+#calculates a hollow symmetric matrix of distance between USpts and other USPts
+#ptsXpts
+pt2pt_dist = DistanceGrid(USpts,USpts)
+
+#defines cutoff (radius at which to include sites at each point and .5 overlap)
+#and convert distance matrices to a mask of what is included
+cutoff= 100000.0
+pt2site_mask = (pt2site_dist < cutoff)
+pt2pt_mask = (pt2pt_dist < cutoff*2)
+
+#for each pt and year find median value af all sites within cutoff 
+#meds ptsXyears
+meds = GenerateMedianTable(flowtab,pt2site_mask)
+
+#finds change points and save as cpsX[year, p-val, mag, pt_index]
+cpsa = FindCPs(meds,pval=pval)
+#plot number of cp in each direction by year
+CountByYear(cpsa,cutoff,pval=pval,N=N)
+
+#finds potential change points as cpsX[year, p-val, mag, pt_index]
+cps = FindCPsThorough(meds,pval=pval)
+x11()
+CountByYear(cps,cutoff,pval=pval)
+
+#build clusters of potential change points
+#members of a cluster are within 2*cutoff and have a potential change point in
+#the same year
+#stored as [upclusters,dnclusters]
+#where upclusters is list(year, [points])
+updnclustersrough = GenerateClustersByYear(cps,pval,pt2pt_mask,N=N)
+
+#merge clusters if they share a point and are in sequential years
+upclusters = MergeClusters(updnclustersrough[[1]])
+dnclusters = MergeClusters(updnclustersrough[[2]])
+
+#save only the year with the most sites for each cluster
+upshort = trimclusters(upclusters)
+dnshort = trimclusters(dnclusters)
+
+
+#finds where clusters overlap spatialy with other clusters 
+#and rembers the year of the other clusters
+overlapyrs = findoverlapyrs(upshort,dnshort)
+
+#builds a mask of which sites are within each cluster
+upmask = buildclustermask(upshort,pt2site_mask)
+dnmask = buildclustermask(dnshort,pt2site_mask)
+
+#for each cluster and year find median value af all sites within cluster 
+#meds clustersXyears
+upmeds = GenerateMedianTable(flowtab,upmask)
+dnmeds = GenerateMedianTable(flowtab,dnmask)
+
+#extract years of potential changepts
+upyrs = pullyears(upshort)
+dnyrs = pullyears(dnshort)
+
+
+#generate a table for seasonal flow as well as annual and seasonal precip
+flowtabDJF = GenerateFlowTable('monthlyflow',flowinv,c(12,1,2))
+flowtabMAM = GenerateFlowTable('monthlyflow',flowinv,3:5)
+flowtabJJA = GenerateFlowTable('monthlyflow',flowinv,6:8)
+flowtabSON = GenerateFlowTable('monthlyflow',flowinv,9:11)
+preciptab = GenerateFlowTable('monthlyprecip',precipinv)
+preciptabDJF = GenerateFlowTable('monthlyprecip',precipinv,c(12,1,2))
+preciptabMAM = GenerateFlowTable('monthlyprecip',precipinv,3:5)
+preciptabJJA = GenerateFlowTable('monthlyprecip',precipinv,6:8)
+preciptabSON = GenerateFlowTable('monthlyprecip',precipinv,9:11)
+
+#finddistance and mask from pts to precip gauges
+pt2precip_dist = DistanceGrid(USpts,precipinv[c(3,2)])
+pt2precip_mask = (pt2precip_dist < cutoff)
+
+#build a mask of gauges to clusters
+upprecipmask = buildclustermask(upshort,pt2precip_mask)
+dnprecipmask = buildclustermask(dnshort,pt2precip_mask)
+
+
+
+#fidn medians
+upflowDJFmeds = GenerateMedianTable(flowtabDJF,upmask)
+upflowMAMmeds = GenerateMedianTable(flowtabMAM,upmask)
+upflowJJAmeds = GenerateMedianTable(flowtabJJA,upmask)
+upflowSONmeds = GenerateMedianTable(flowtabSON,upmask)
+upprecipmeds = GenerateMedianTable(preciptab,upprecipmask)
+upprecipDJFmeds = GenerateMedianTable(preciptabDJF,upprecipmask)
+upprecipMAMmeds = GenerateMedianTable(preciptabMAM,upprecipmask)
+upprecipJJAmeds = GenerateMedianTable(preciptabJJA,upprecipmask)
+upprecipSONmeds = GenerateMedianTable(preciptabSON,upprecipmask)
+
+dnflowDJFmeds = GenerateMedianTable(flowtabDJF,dnmask)
+dnflowMAMmeds = GenerateMedianTable(flowtabMAM,dnmask)
+dnflowJJAmeds = GenerateMedianTable(flowtabJJA,dnmask)
+dnflowSONmeds = GenerateMedianTable(flowtabSON,dnmask)
+dnprecipmeds = GenerateMedianTable(preciptab,dnprecipmask)
+dnprecipDJFmeds = GenerateMedianTable(preciptabDJF,dnprecipmask)
+dnprecipMAMmeds = GenerateMedianTable(preciptabMAM,dnprecipmask)
+dnprecipJJAmeds = GenerateMedianTable(preciptabJJA,dnprecipmask)
+dnprecipSONmeds = GenerateMedianTable(preciptabSON,dnprecipmask)
+
+
+
+#plots clusters and timeseries
+for(i in 1:length(upyrs)){
+    tiff(paste(as.character(upyrs[[i]]),'upmedssml.tiff',sep=''),width= 8,height=12,units='in',res=300)
+    par(mfrow=c(2,1))
+    #plotcluster(upshort[[i]], USpts, cutoff)
+    plotvariable(upmeds,upflowDJFmeds,upflowMAMmeds,upflowJJAmeds,
+                 upflowSONmeds,upyrs,overlapyrs[[1]],i,
+                 paste('Mean Streamflow',as.character(upyrs[[i]])))
+    title('A', adj=0)
+    plotvariable(upprecipmeds,upprecipDJFmeds,upprecipMAMmeds,upprecipJJAmeds,
+                 upprecipSONmeds,upyrs,overlapyrs[[1]],i,
+                 paste('Mean Precipitation',as.character(upyrs[[i]])))
+    title('B', adj=0)
+    dev.off()
+}
+
+
+#Change to tiffs
+for(i in 1:length(dnyrs)){   
+    tiff(paste(as.character(dnyrs[[i]]),'dnmedssml.tiff',sep=''),width= 8,height=12,units='in',res=300)
+    par(mfrow=c(2,1))
+    #plotcluster(dnshort[[i]], USpts, cutoff)
+    plotvariable(dnmeds,dnflowDJFmeds,dnflowMAMmeds,dnflowJJAmeds,
+                 dnflowSONmeds,dnyrs,overlapyrs[[2]],i,
+                 paste('Mean Streamflow',as.character(dnyrs[[i]])))
+    title('A', adj=0)
+    
+    plotvariable(dnprecipmeds,dnprecipDJFmeds,dnprecipMAMmeds,dnprecipJJAmeds,
+                 dnprecipSONmeds,dnyrs,overlapyrs[[2]],i, 
+                 paste('Mean Precipitation',as.character(dnyrs[[i]])))
+    title('B', adj=0)
+    dev.off()
+}
+
+
+dtime = proc.time()-time1
+print(dtime)
+
+
